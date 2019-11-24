@@ -66,6 +66,7 @@ static inline enum AVColorSpace pl_system_to_av(enum pl_color_system sys)
     case PL_COLOR_SYSTEM_YCGCO:         return AVCOL_SPC_YCGCO;
     case PL_COLOR_SYSTEM_RGB:           return AVCOL_SPC_RGB;
     case PL_COLOR_SYSTEM_XYZ:           return AVCOL_SPC_UNSPECIFIED; // handled differently
+    case PL_COLOR_SYSTEM_DOLBY_IPT:     return AVCOL_SPC_UNSPECIFIED; // missing
     case PL_COLOR_SYSTEM_COUNT:         return AVCOL_SPC_NB;
     }
 

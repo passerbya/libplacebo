@@ -397,6 +397,7 @@ static void pl_shader_tests(const struct pl_gpu *gpu)
 
         case PL_COLOR_SYSTEM_BT_2100_PQ:
         case PL_COLOR_SYSTEM_BT_2100_HLG:
+        case PL_COLOR_SYSTEM_DOLBY_IPT:
             // These seem to be horrifically noisy and prone to breaking on
             // edge cases for some reason
             // TODO: figure out why!

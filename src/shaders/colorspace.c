@@ -135,6 +135,21 @@ void pl_shader_decode_color(struct pl_shader *sh, struct pl_color_repr *repr,
         break;
     }
 
+    case PL_COLOR_SYSTEM_DOLBY_IPT: {
+        // Similar to ICtCp above, but with a proprietary matrix. The code
+        // to generate this is identical, but with the crosstalk factor
+        // set to 0.02 (instead of 0.04).
+        static const char *dvipt_lms2rgb = "mat3("
+            " 3.238743, -0.719277, -0.002808, "
+            "-2.325507,  1.878236, -0.071547, "
+            " 0.086764, -0.158976,  1.074510) ";
+
+        pl_shader_linearize(sh, PL_COLOR_TRC_PQ);
+        GLSL("color.rgb = %s * color.rgb; \n", dvipt_lms2rgb);
+        pl_shader_delinearize(sh, PL_COLOR_TRC_PQ);
+        break;
+    }
+
     case PL_COLOR_SYSTEM_XYZ:
         break; // no special post-processing needed
 
@@ -210,6 +225,19 @@ void pl_shader_encode_color(struct pl_shader *sh,
         pl_shader_linearize(sh, trc);
         GLSL("color.rgb = %s * color.rgb; \n", bt2100_rgb2lms);
         pl_shader_delinearize(sh, trc);
+        break;
+    }
+
+    case PL_COLOR_SYSTEM_DOLBY_IPT: {
+        // Inverse of the matrix above
+        static const char *dvipt_rgb2lms = "mat3("
+            "0.426427, 0.164322, 0.012056, "
+            "0.529647, 0.739530, 0.050627, "
+            "0.043929, 0.096146, 0.937173) ";
+
+        pl_shader_linearize(sh, PL_COLOR_TRC_PQ);
+        GLSL("color.rgb = %s * color.rgb; \n", dvipt_rgb2lms);
+        pl_shader_delinearize(sh, PL_COLOR_TRC_PQ);
         break;
     }
 

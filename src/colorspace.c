@@ -33,6 +33,7 @@ bool pl_color_system_is_ycbcr_like(enum pl_color_system sys)
     case PL_COLOR_SYSTEM_BT_2020_C:
     case PL_COLOR_SYSTEM_BT_2100_PQ:
     case PL_COLOR_SYSTEM_BT_2100_HLG:
+    case PL_COLOR_SYSTEM_DOLBY_IPT:
     case PL_COLOR_SYSTEM_YCGCO:
         return true;
     case PL_COLOR_SYSTEM_COUNT: break;
@@ -55,6 +56,7 @@ bool pl_color_system_is_linear(enum pl_color_system sys)
     case PL_COLOR_SYSTEM_BT_2020_C:
     case PL_COLOR_SYSTEM_BT_2100_PQ:
     case PL_COLOR_SYSTEM_BT_2100_HLG:
+    case PL_COLOR_SYSTEM_DOLBY_IPT:
     case PL_COLOR_SYSTEM_XYZ:
         return false;
     case PL_COLOR_SYSTEM_COUNT: break;
@@ -143,6 +145,9 @@ enum pl_color_levels pl_color_levels_guess(const struct pl_color_repr *repr)
 {
     if (repr->levels)
         return repr->levels;
+
+    if (repr->sys == PL_COLOR_SYSTEM_DOLBY_IPT)
+        return PL_COLOR_LEVELS_FULL;
 
     return pl_color_system_is_ycbcr_like(repr->sys)
                 ? PL_COLOR_LEVELS_LIMITED
@@ -941,6 +946,13 @@ struct pl_transform3x3 pl_color_repr_decode(struct pl_color_repr *repr,
         }};
         break;
     }
+    case PL_COLOR_SYSTEM_DOLBY_IPT:
+        m = (struct pl_matrix3x3) {{
+            {1.0,  0.19513786,  0.410452866},
+            {1.0, -0.22775297,  0.266434317},
+            {1.0,  0.06523022, -1.353774366},
+        }};
+        break;
     case PL_COLOR_SYSTEM_YCGCO:
         m = (struct pl_matrix3x3) {{
             {1,  -1,  1},
