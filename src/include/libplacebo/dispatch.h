@@ -65,6 +65,12 @@ struct pl_dispatch_params {
     // If set, records the execution time of this dispatch into the given
     // timer object. Optional.
     struct pl_timer *timer;
+
+    // If set, record this dispatch into the given dispatch command instead of
+    // actually executing it. Optional. Note that `pl_dispatch_finish` may
+    // still fail in this case, e.g. if the shader would exhaust the `pl_gpu`'s
+    // resources, or if shader compilation fails.
+    struct pl_dispatch_cmd *cmd;
 };
 
 // Dispatch a generated shader (via the pl_shader mechanism). Returns whether
@@ -94,6 +100,12 @@ struct pl_dispatch_compute_params {
     // If set, records the execution time of this dispatch into the given
     // timer object. Optional.
     struct pl_timer *timer;
+
+    // If set, record this dispatch into the given dispatch command instead of
+    // actually executing it. Optional. Note that `pl_dispatch_compute` may
+    // still fail in this case, e.g. if the shader would exhaust the `pl_gpu`'s
+    // resources, or if shader compilation fails.
+    struct pl_dispatch_cmd *cmd;
 };
 
 // A variant of `pl_dispatch_finish`, this one only dispatches a compute shader
@@ -104,5 +116,85 @@ bool pl_dispatch_compute(struct pl_dispatch *dp,
 // Cancel an active shader without submitting anything. Useful, for example,
 // if the shader was instead merged into a different shader.
 void pl_dispatch_abort(struct pl_dispatch *dp, struct pl_shader **sh);
+
+// Dispatch command system. This can be used to avoid re-generating shaders
+// every single frame, which may be useful if the user intends to re-execute
+// the same set of shaders many times without modification. (Conceptually
+// similar to command buffers in various graphics APIs)
+//
+// Note: In most scenarios this is not really needed and only represents a
+// relatively minor CPU / battery lifetime optimization. Re-generating shaders
+// is relatively cheap, and importantly, the resulting shaders only need to
+// be checked against the `pl_dispatch` cache - not re-compiled.
+
+struct pl_dispatch_cmd;
+
+// Metadata describing a dynamic descriptor object. These descriptors can be
+// swapped out by different objects at command execution time.
+struct pl_dispatch_object {
+    // Arbitrary ID used to re-identify this object later. Can be anything
+    // the user wants, but must uniquely identify this particular object.
+    uint64_t id;
+
+    // Descriptor object (`pl_shader_desc.object`).
+    const void *object;
+};
+
+// Create a new blank dispatch command, optionally parametrized by the given
+// list of dynamic dispatch objects, terminated by a {0} entry. If `objects` is
+// NULL, the resulting dispatch command will not have any dynamic descriptors.
+struct pl_dispatch_cmd *pl_dispatch_cmd_create(struct pl_dispatch *dp,
+                                               const struct pl_dispatch_object *objects);
+
+void pl_dispatch_cmd_destroy(struct pl_dispatch_cmd **cmd);
+
+// Execute all of the dispatch commands recorded in this `pl_dispatch_cmd`,
+// with any dynamic descriptors being replaced by entries specified in
+// `objects`, terminated by a {0} entry. If `objects `is NULL, no parameters
+// are updated.
+//
+// Entries not present in `objects` will retain their binding from the previous
+// execution of this command, or the initial values if never executed.
+//
+// Returns false (and aborts execution) if any of the recorded commands failed.
+bool pl_dispatch_cmd_execute(struct pl_dispatch_cmd *cmd,
+                             const struct pl_dispatch_object *objects);
+
+/* XXX: example usage:
+
+enum {
+    DESC_PLANE0 = 0,
+    DESC_PLANE1,
+    DESC_PLANE2,
+    DESC_PLANE3,
+    DESC_FBO,
+};
+
+struct pl_dispatch_cmd *cmd;
+cmd = pl_dispatch_cmd_create(dp, (struct pl_dispatch_object[]) {
+    { DESC_PLANE0, image->planes[0].tex },
+    { DESC_PLANE1, image->planes[1].tex },
+    { DESC_PLANE2, image->planes[2].tex },
+    { DESC_PLANE3, image->planes[3].tex },
+    { DESC_FBO, target->fbo },
+    {0},
+});
+
+// perform rendering as usual but with `.cmd = cmd` in the params structs
+
+while (true) {
+    // update plane textures and get new `target`
+
+    pl_dispatch_cmd_execute(cmd, (struct pl_dispatch_objects[]) {
+        { DESC_PLANE0, image->planes[0].tex },
+        { DESC_PLANE1, image->planes[1].tex },
+        { DESC_PLANE2, image->planes[2].tex },
+        { DESC_PLANE3, image->planes[3].tex },
+        { DESC_FBO, target->fbo },
+        {0},
+    });
+}
+
+*/
 
 #endif // LIBPLACEBO_DISPATCH_H
