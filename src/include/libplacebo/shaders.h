@@ -29,13 +29,6 @@
 struct pl_shader;
 
 struct pl_shader_params {
-    // The `id` represents an abstract identifier for the shader, to avoid
-    // collisions with other shaders being used as part of the same larger,
-    // overarching shader. This is relevant for users which want to combine
-    // multiple `pl_shader` objects together, in which case all `pl_shader`
-    // objects should have a unique `id`.
-    uint8_t id;
-
     // If `gpu` is non-NULL, then this `gpu` will be used to create objects
     // such as textures and buffers, or check for required capabilities, for
     // operations which depend on either of those. This is fully optional, i.e.

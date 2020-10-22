@@ -257,6 +257,17 @@ void bstr_lower(struct bstr str)
         str.start[i] = mp_tolower(str.start[i]);
 }
 
+int bstr_replace_char(struct bstr str, int c, int r)
+{
+    int pos, count = 0;
+    while ((pos = bstrchr(str, c)) >= 0) {
+        str.start[pos] = r;
+        count++;
+    }
+
+    return count;
+}
+
 int bstr_sscanf(struct bstr str, const char *format, ...)
 {
     char *ptr = bstrdup0(NULL, str);

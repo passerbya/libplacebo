@@ -50,6 +50,7 @@ struct pl_shader {
     enum pl_sampler_type sampler_type;
     char sampler_prefix;
     int fresh;
+    int sub_id;
 
     // mutable versions of the fields from pl_shader_res
     struct pl_shader_va *vertex_attribs;

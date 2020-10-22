@@ -22,6 +22,13 @@
 #include "context.h"
 #include "shaders.h"
 
+#define SH_ID_PLACEHOLDER '\x1A' // 0x1A: ASCII 'SUB'
+#define SH_ID_MAIN '_'
+
+// For sub-shaders
+#define SH_ID_FIRST 'a'
+#define SH_ID_MAX 'z'
+
 struct pl_shader *pl_shader_alloc(struct pl_context *ctx,
                                   const struct pl_shader_params *params)
 {
@@ -184,8 +191,8 @@ uint64_t pl_shader_signature(const struct pl_shader *sh)
 
 ident_t sh_fresh(struct pl_shader *sh, const char *name)
 {
-    return talloc_asprintf(sh->tmp, "_%s_%d_%u", PL_DEF(name, "var"),
-                           sh->fresh++, SH_PARAMS(sh).id);
+    return talloc_asprintf(sh->tmp, "_%s_%d_%c", PL_DEF(name, "var"),
+                           sh->fresh++, SH_ID_PLACEHOLDER);
 }
 
 ident_t sh_var(struct pl_shader *sh, struct pl_shader_var sv)
@@ -396,14 +403,60 @@ static const char *samplers2D[] = {
     [PL_SAMPLER_EXTERNAL]   = "samplerExternalOES",
 };
 
+static void append_rename(struct pl_shader *sh, bstr *buf, bstr append, char id)
+{
+    size_t start = buf->len;
+    bstr_xappend(sh, buf, append);
+
+    struct bstr appended = {
+        .start = buf->start + start,
+        .len = append.len,
+    };
+
+    bstr_replace_char(appended, SH_ID_PLACEHOLDER, id);
+}
+
+static const char *strdup_rename(void *tactx, const char *str, int id)
+{
+    // Avoid unnecessary allocations
+    if (!strchr(str, SH_ID_PLACEHOLDER))
+        return str;
+
+    char *new = talloc_strdup(tactx, str);
+    bstr_replace_char(bstr0(new), SH_ID_PLACEHOLDER, id);
+    return new;
+}
+
+static void rename_attachments(struct pl_shader *sh, int idx_vas, int idx_vars,
+                               int idx_desc, char id)
+{
+    for (int i = idx_vas; i < sh->res.num_vertex_attribs; i++) {
+        struct pl_shader_va *sva = &sh->vertex_attribs[i];
+        sva->attr.name = strdup_rename(sh->tmp, sva->attr.name, id);
+    }
+
+    for (int i = idx_vars; i < sh->res.num_variables; i++) {
+        struct pl_shader_var *svar = &sh->variables[i];
+        svar->var.name = strdup_rename(sh->tmp, svar->var.name, id);
+    }
+
+    for (int i = idx_desc; i < sh->res.num_descriptors; i++) {
+        struct pl_shader_desc *sd = &sh->descriptors[i];
+        sd->desc.name = strdup_rename(sh->tmp, sd->desc.name, id);
+
+        // Also rename all buffer variables
+        size_t bsize = sizeof(sd->buffer_vars[0]) * sd->num_buffer_vars;
+        sd->buffer_vars = talloc_memdup(sh->tmp, sd->buffer_vars, bsize);
+        for (int n = 0; n < sd->num_buffer_vars; n++) {
+            sd->buffer_vars[n].var.name =
+                strdup_rename(sh->tmp, sd->buffer_vars[n].var.name, id);
+        }
+    }
+}
+
 ident_t sh_subpass(struct pl_shader *sh, const struct pl_shader *sub)
 {
     pl_assert(sh->mutable);
-
-    if (SH_PARAMS(sh).id == SH_PARAMS(sub).id) {
-        PL_TRACE(sh, "Can't merge shaders: conflicting identifiers!");
-        return NULL;
-    }
 
     // Check for shader compatibility
     int res_w = PL_DEF(sh->output_w, sub->output_w),
@@ -432,9 +485,11 @@ ident_t sh_subpass(struct pl_shader *sh, const struct pl_shader *sub)
     sh->output_w = res_w;
     sh->output_h = res_h;
 
-    // Append the prelude and header
-    bstr_xappend(sh, &sh->buffers[SH_BUF_PRELUDE], sub->buffers[SH_BUF_PRELUDE]);
-    bstr_xappend(sh, &sh->buffers[SH_BUF_HEADER],  sub->buffers[SH_BUF_HEADER]);
+    // Append the prelude and header, while renaming identifiers
+    char sub_id = SH_ID_FIRST + sh->sub_id++;
+    pl_assert(sub_id <= SH_ID_MAX);
+    append_rename(sh, &sh->buffers[SH_BUF_PRELUDE], sub->buffers[SH_BUF_PRELUDE], sub_id);
+    append_rename(sh, &sh->buffers[SH_BUF_HEADER],  sub->buffers[SH_BUF_HEADER], sub_id);
 
     // Append the body as a new header function
     ident_t name = sh_fresh(sh, "sub");
@@ -446,16 +501,20 @@ ident_t sh_subpass(struct pl_shader *sh, const struct pl_shader *sub)
     } else {
         GLSLH("%s %s(%s) {\n", outsigs[sub->res.output], name, insigs[sub->res.input]);
     }
-    bstr_xappend(sh, &sh->buffers[SH_BUF_HEADER], sub->buffers[SH_BUF_BODY]);
+    append_rename(sh, &sh->buffers[SH_BUF_HEADER], sub->buffers[SH_BUF_BODY], sub_id);
     GLSLH("%s\n}\n\n", retvals[sub->res.output]);
 
     // Copy over all of the descriptors etc.
+    int idx_vas  = sh->res.num_vertex_attribs;
+    int idx_vars = sh->res.num_variables;
+    int idx_desc = sh->res.num_descriptors;
     talloc_ref_attach(sh->tmp, sub->tmp);
 #define COPY(f) TARRAY_CONCAT(sh, sh->f, sh->res.num_##f, sub->f, sub->res.num_##f)
+    COPY(vertex_attribs);
     COPY(variables);
     COPY(descriptors);
-    COPY(vertex_attribs);
 #undef COPY
+    rename_attachments(sh, idx_vas, idx_vars, idx_desc, sub_id);
 
     return name;
 }
@@ -511,11 +570,13 @@ const struct pl_shader_res *pl_shader_finalize(struct pl_shader *sh)
     // Concatenate the header onto the prelude to form the final output
     struct bstr *glsl = &sh->buffers[SH_BUF_PRELUDE];
     bstr_xappend(sh, glsl, sh->buffers[SH_BUF_HEADER]);
+    bstr_replace_char(*glsl, SH_ID_PLACEHOLDER, SH_ID_MAIN);
 
     // Set the vas/vars/descs
     sh->res.vertex_attribs = sh->vertex_attribs;
     sh->res.variables = sh->variables;
     sh->res.descriptors = sh->descriptors;
+    rename_attachments(sh, 0, 0, 0, SH_ID_MAIN);
 
     // Update the result pointer and return
     sh->res.glsl = glsl->start;

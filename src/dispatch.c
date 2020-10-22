@@ -32,7 +32,6 @@ enum {
 struct pl_dispatch {
     struct pl_context *ctx;
     const struct pl_gpu *gpu;
-    uint8_t current_ident;
     uint8_t current_index;
 
     // pool of pl_shaders, in order to avoid frequent re-allocations
@@ -128,7 +127,6 @@ void pl_dispatch_destroy(struct pl_dispatch **ptr)
 struct pl_shader *pl_dispatch_begin_ex(struct pl_dispatch *dp, bool unique)
 {
     struct pl_shader_params params = {
-        .id = unique ? dp->current_ident++ : 0,
         .gpu = dp->gpu,
         .index = dp->current_index,
     };
@@ -144,7 +142,6 @@ struct pl_shader *pl_dispatch_begin_ex(struct pl_dispatch *dp, bool unique)
 
 void pl_dispatch_reset_frame(struct pl_dispatch *dp)
 {
-    dp->current_ident = 0;
     dp->current_index++;
 }
 
