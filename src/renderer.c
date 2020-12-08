@@ -1727,6 +1727,7 @@ static inline void default_rect(struct pl_rect2df *rc,
 
 static void fix_refs_and_rects(struct pass_state *pass)
 {
+    struct pl_renderer *rr = pass->rr;
     struct pl_frame *image = &pass->image;
     struct pl_frame *target = &pass->target;
 
@@ -1810,6 +1811,78 @@ static void fix_refs_and_rects(struct pass_state *pass)
     pass->dst_rect = (struct pl_rect2d) {
         dst->x0, dst->y0, dst->x1, dst->y1,
     };
+
+    // Try and micro-optimize chroma offsets in order to prevent chroma
+    // interpolation artifacts if both the image and target are subsampled
+    float offset_x[4] = {0}, offset_y[4] = {0};
+
+    for (int i = 0; i < image->num_planes; i++) {
+        const struct pl_plane *plane = &image->planes[i];
+        bool subx = plane->texture->params.w < src_ref->params.w;
+        bool suby = plane->texture->params.h < src_ref->params.h;
+        float aligned_x = subx ? -0.5 : 0.0;
+        float aligned_y = suby ? -0.5 : 0.0;
+
+        for (int c = 0; c < plane->components; c++) {
+            int comp = plane->component_mapping[c];
+            offset_x[comp] = aligned_x - plane->shift_x;
+            offset_y[comp] = aligned_y - plane->shift_y;
+        }
+    }
+
+    for (int i = 0; i < target->num_planes; i++) {
+        const struct pl_plane *plane = &target->planes[i];
+        bool subx = plane->texture->params.w < dst_ref->params.w;
+        bool suby = plane->texture->params.h < dst_ref->params.h;
+        float aligned_x = subx ? -0.5 : 0.0;
+        float aligned_y = suby ? -0.5 : 0.0;
+        bool misaligned = false;
+
+        for (int c = 0; c < plane->components; c++) {
+            int comp = plane->component_mapping[c];
+            if (fabs(plane->shift_x + offset_x[comp] - aligned_x) > 1e-3)
+                offset_x[comp] = 0.0;
+            if (fabs(plane->shift_y + offset_y[comp] - aligned_y) > 1e-3)
+                offset_y[comp] = 0.0;
+
+            // Ensure that all previous components have the same offset
+            for (int o = 0; o < c; o++) {
+                int other = plane->component_mapping[o];
+                misaligned |= fabs(offset_x[comp] - offset_x[other]) > 1e-3;
+                misaligned |= fabs(offset_y[comp] - offset_y[other]) > 1e-3;
+            }
+
+            if (misaligned)
+                break;
+        }
+
+        if (misaligned) {
+            for (int c = 0; c < plane->components; c++) {
+                int comp = plane->component_mapping[c];
+                offset_x[comp] = 0.0;
+                offset_y[comp] = 0.0;
+            }
+        }
+    }
+
+    for (int c = 0; c < PL_ARRAY_SIZE(offset_x); c++) {
+        if (offset_x[c] || offset_y[c]) {
+            PL_TRACE(rr, "Applying offset of (%f %f) to component %d",
+                     offset_x[c], offset_y[c], c);
+        }
+    }
+
+    for (int i = 0; i < image->num_planes; i++) {
+        int comp = image->planes[i].component_mapping[0];
+        image->planes[i].shift_x += offset_x[comp];
+        image->planes[i].shift_y += offset_y[comp];
+    }
+
+    for (int i = 0; i < target->num_planes; i++) {
+        int comp = target->planes[i].component_mapping[0];
+        target->planes[i].shift_x += offset_x[comp];
+        target->planes[i].shift_y += offset_y[comp];
+    }
 }
 
 static const struct pl_tex *frame_ref(const struct pl_frame *frame)
