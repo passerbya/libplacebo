@@ -209,12 +209,27 @@ extern const struct pl_render_params pl_render_high_quality_params;
 
 #define PL_MAX_PLANES 4
 
+enum pl_plane_type {
+    PL_PLANE_COLOR = 0, // normal textures containing color data
+    PL_PLANE_INDEX,     // palette index texture
+    PL_PLANE_PALETTE,   // palette contents texture
+    PL_PLANE_CONST,     // alpha plane with constant base color
+};
+
 // High level description of a single slice of an image. This basically
 // represents a single 2D plane, with any number of components
 struct pl_plane {
-    // The texture underlying this plane. The texture must be 2D, and must
-    // have specific parameters set depending on what the plane is being used
-    // for (see `pl_render_image`).
+    // The type of plane. Determines which of the below fields are relevant, as
+    // well as how they're interpreted. Note that mixing and matching plane
+    // types is generally unsupported.
+    enum pl_plane_type type;
+
+    // The texture underlying this plane. For PL_PLANE_PALETTE, this must be
+    // 1D. For all other plane types, it must be 2D. For PL_PLANE_INDEX, it
+    // must be of type PL_FMT_UINT. Otherwise, it must be any non-integer type.
+    //
+    // Note: There can be multiple PL_PLANE_PALETTE planes, (perhaps containing
+    // different components), but they must all have the same size, if so.
     const struct pl_tex *texture;
 
     // The preferred behaviour when sampling outside of this texture. Optional,
@@ -223,17 +238,8 @@ struct pl_plane {
 
     // Describes the number and interpretation of the components in this plane.
     // This defines the mapping from component index to the canonical component
-    // order (RGBA, YCbCrA or XYZA). It's worth pointing out that this is
-    // completely separate from `texture->format.sample_order`. The latter is
-    // essentially irrelevant/transparent for the API user, since it just
-    // determines which order the texture data shows up as inside the GLSL
-    // shader; whereas this field controls the actual meaning of the component.
-    //
-    // Example; if the user has a plane with just {Y} and a plane with just
-    // {Cb Cr}, and a GPU that only supports bgra formats, you would still
-    // specify the component mapping as {0} and {1 2} respectively, even though
-    // the GPU is sampling the data in the order BGRA. Use -1 for "ignored"
-    // components.
+    // order (RGBA, YCbCrA or XYZA). Only applies to PL_PLANE_COLOR and
+    // PL_PLANE_PALETTE.
     int components;           // number of relevant components
     int component_mapping[4]; // semantic index of each component
 
@@ -262,11 +268,16 @@ struct pl_plane {
     //
     // For 4:2:0 subsampling, this corresponds to PL_CHROMA_LEFT.
     //
-    // Note: It's recommended to fill this using `pl_chroma_location_offset` on
-    // the chroma planes.
+    // Only applies to PL_PLANE_COLOR.
     float shift_x, shift_y;
+
+    // For PL_PLANE_CONST, this specifies the (fixed) base color multiplied
+    // into the alpha value provided by the texture. Ignored for other types.
+    float base_color[3];
 };
 
+// Note: This is deprecated in favor of `pl_plane_type`, but still used as a
+// fallback in case it's more specific.
 enum pl_overlay_mode {
     PL_OVERLAY_NORMAL = 0, // treat the texture as a normal, full-color texture
     PL_OVERLAY_MONOCHROME, // treat the texture as a single-component alpha map
@@ -292,10 +303,12 @@ struct pl_overlay {
     struct pl_rect2d rect;
 
     // This controls the coloring mode of this overlay.
-    enum pl_overlay_mode mode;
+    //
+    // Note: Deprecated in favor of `plane.type`, but still respected.
+    enum pl_overlay_mode mode PL_DEPRECATED;
     // If `mode` is PL_OVERLAY_MONOCHROME, then the texture is treated as an
     // alpha map and multiplied by this base color. Ignored for the other modes.
-    float base_color[3];
+    float base_color[3] PL_DEPRECATED;
 
     // This controls the colorspace information for this overlay. The contents
     // of the texture / the value of `color` are interpreted according to this.

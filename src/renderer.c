@@ -238,6 +238,8 @@ enum plane_type {
     PLANE_LUMA,
     PLANE_RGB,
     PLANE_XYZ,
+    PLANE_CONST,
+    PLANE_IDX,
 };
 
 struct pass_state {
@@ -990,6 +992,9 @@ static bool plane_av1_grain(struct pass_state *pass, int plane_idx,
         .components = plane->components,
     };
 
+    if (plane->type != PL_PLANE_COLOR)
+        return false;
+
     for (int c = 0; c < plane->components; c++)
         grain_params.component_mapping[c] = plane->component_mapping[c];
 
@@ -1036,6 +1041,9 @@ static bool plane_av1_grain(struct pass_state *pass, int plane_idx,
 static bool plane_user_hooks(struct pass_state *pass, struct plane_state *st,
                              const struct pl_render_params *params)
 {
+    if (st->plane.type != PL_PLANE_COLOR)
+        return false;
+
     static const enum pl_hook_stage plane_stages[] = {
         [PLANE_ALPHA]   = PL_HOOK_ALPHA_INPUT,
         [PLANE_CHROMA]  = PL_HOOK_CHROMA_INPUT,
@@ -1637,10 +1645,24 @@ fallback:
   do {                                                                          \
       require((plane).texture);                                                 \
       require((plane).texture->params.param);                                   \
-      require((plane).components > 0 && (plane).components <= 4);               \
-      for (int c = 0; c < (plane).components; c++) {                            \
-          require((plane).component_mapping[c] >= PL_CHANNEL_NONE &&            \
-                  (plane).component_mapping[c] <= PL_CHANNEL_A);                \
+      switch ((plane).type) {                                                   \
+      case PL_PLANE_PALETTE:                                                    \
+         require((plane).texture->params.h == 0);                               \
+         /* fall through */                                                     \
+      case PL_PLANE_COLOR:                                                      \
+          require((plane).components > 0 && (plane).components <= 4);           \
+          for (int c = 0; c < (plane).components; c++) {                        \
+              require((plane).component_mapping[c] >= PL_CHANNEL_NONE &&        \
+                      (plane).component_mapping[c] <= PL_CHANNEL_A);            \
+          }                                                                     \
+          /* fall through */                                                    \
+          case PL_PLANE_CONST:                                                  \
+         require((plane).texture->params.format->type != PL_FMT_UINT);          \
+         require((plane).texture->params.format->type != PL_FMT_SINT);          \
+         break;                                                                 \
+      case PL_PLANE_INDEX:                                                      \
+         require((plane).texture->params.format->type == PL_FMT_UINT);          \
+         break;                                                                 \
       }                                                                         \
   } while (0)
 
@@ -1653,14 +1675,67 @@ static bool validate_structs(struct pl_renderer *rr,
                              const struct pl_frame *image,
                              const struct pl_frame *target)
 {
+    uint8_t src_mask = 0, dst_mask = 0;
+
     // Rendering to/from a frame with no planes is technically allowed, but so
     // pointless that it's more likely to be a user error worth catching.
     require(image->num_planes > 0 && image->num_planes <= PL_MAX_PLANES);
     require(target->num_planes > 0 && target->num_planes <= PL_MAX_PLANES);
-    for (int i = 0; i < image->num_planes; i++)
+    for (int i = 0; i < image->num_planes; i++) {
+        src_mask |= 1u << image->planes[i].type;
         validate_plane(image->planes[i], sampleable);
-    for (int i = 0; i < target->num_planes; i++)
+    }
+    for (int i = 0; i < target->num_planes; i++) {
+        dst_mask |= 1u << target->planes[i].type;
         validate_plane(target->planes[i], renderable);
+    }
+
+    switch (src_mask) {
+    case 0x01: // only color planes
+        break;
+    case 0x08: // single const plane
+        require(image->num_planes == 1);
+        break;
+    case 0x06: { // index + palette planes
+        bool found_idx = false;
+        bool found_pal = false;
+        int palette_size;
+        for (int i = 0; i < image->num_planes; i++) {
+            if (image->planes[i].type == PL_PLANE_INDEX) {
+                // Ensure only a single index plane
+                require(!found_idx);
+                found_idx = true;
+            } else {
+                // Ensure all palette planes have the same size
+                int plane_size = image->planes[i].texture->params.w;
+                if (found_pal) {
+                    require(palette_size == plane_size);
+                } else {
+                    found_pal = true;
+                    palette_size = plane_size;
+                }
+            }
+        }
+        break;
+    }
+    default:
+        PL_ERR(rr, "Illegal plane type combination for source frame!");
+        return false;
+    }
+
+    switch (dst_mask) {
+    case 0x01: // only color planes
+        break;
+    case 0x08: // single const plane
+        PL_ERR(rr, "Rendering to PL_PLANE_CONST is not supported");
+        break;
+    case 0x06: // index + palette planes
+        PL_ERR(rr, "Rendering to palette formats is not supported");
+        break;
+    default:
+        PL_ERR(rr, "Illegal plane type combination for target frame!");
+        return false;
+    }
 
     float src_w = pl_rect_w(image->crop), src_h = pl_rect_h(image->crop);
     float dst_w = pl_rect_w(target->crop), dst_h = pl_rect_h(target->crop);
@@ -1686,6 +1761,12 @@ static bool validate_structs(struct pl_renderer *rr,
 static inline enum plane_type detect_plane_type(const struct pl_plane *plane,
                                                 const struct pl_color_repr *repr)
 {
+    switch (plane->type) {
+    case PL_PLANE_INDEX: return PLANE_IDX;
+    case PL_PLANE_CONST: return PLANE_CONST;
+    default: break;
+    }
+
     if (pl_color_system_is_ycbcr_like(repr->sys)) {
         int t = -1;
         for (int c = 0; c < plane->components; c++) {
@@ -1734,10 +1815,13 @@ static void fix_refs_and_rects(struct pass_state *pass)
     for (int i = 0; i < image->num_planes; i++) {
         pass->src_type[i] = detect_plane_type(&image->planes[i], &image->repr);
         switch (pass->src_type[i]) {
+        case PLANE_CONST:
+        case PLANE_IDX:
         case PLANE_RGB:
         case PLANE_LUMA:
         case PLANE_XYZ:
-            pass->src_ref = i;
+            if (!pass->src_ref || pass->src_type[i] > pass->src_type[pass->src_ref])
+                pass->src_ref = i;
             break;
         default: break;
         }
@@ -1746,10 +1830,13 @@ static void fix_refs_and_rects(struct pass_state *pass)
     for (int i = 0; i < target->num_planes; i++) {
         pass->dst_type[i] = detect_plane_type(&target->planes[i], &target->repr);
         switch (pass->dst_type[i]) {
+        case PLANE_CONST:
+        case PLANE_IDX:
         case PLANE_RGB:
         case PLANE_LUMA:
         case PLANE_XYZ:
-            pass->dst_ref = i;
+            if (!pass->dst_ref || pass->src_type[i] > pass->src_type[pass->dst_ref])
+                pass->dst_ref = i;
             break;
         default: break;
         }
