@@ -509,4 +509,15 @@ void pl_vulkan_release(const struct pl_gpu *gpu, const struct pl_tex *tex,
                        VkImageLayout layout, VkAccessFlags access,
                        VkSemaphore sem_in);
 
+// This is like `pl_vulkan_release`, except it locks the VkImage into the given
+// layout and access internally. This can be useful in cases where you need to
+// synchronize read-only usages of the image with external code. Attempting to
+// use any operation on the image that requires a transition is undefined
+// behaviour.
+//
+// The image will remain pinned until you use `pl_vulkan_hold` on it again.
+void pl_vulkan_pin(const struct pl_gpu *gpu, const struct pl_tex *tex,
+                   VkImageLayout layout, VkAccessFlags access,
+                   VkSemaphore sem_in);
+
 #endif // LIBPLACEBO_VULKAN_H_

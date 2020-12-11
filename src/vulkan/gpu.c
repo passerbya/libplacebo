@@ -590,6 +590,7 @@ static void vk_cmd_timer_end(const struct pl_gpu *gpu, struct vk_cmd *cmd,
 struct pl_tex_vk {
     int refcount; // 1 = object allocated but not in use, > 1 = in use
     bool held;
+    bool pinned;
     bool external_img;
     bool may_invalidate;
     enum queue_type transfer_queue;
@@ -725,6 +726,8 @@ static void tex_barrier(const struct pl_gpu *gpu, struct vk_cmd *cmd,
                       tex_vk->current_access != newAccess ||
                       (imgBarrier.srcQueueFamilyIndex !=
                        imgBarrier.dstQueueFamilyIndex);
+
+    pl_assert(!tex_vk->pinned || !need_trans);
 
     // Transitioning to VK_IMAGE_LAYOUT_UNDEFINED is a pseudo-operation
     // that for us means we don't need to perform the actual transition
@@ -1368,6 +1371,7 @@ bool pl_vulkan_hold(const struct pl_gpu *gpu, const struct pl_tex *tex,
 
     CMD_MARK_BEGIN(cmd);
 
+    tex_vk->pinned = false;
     tex_barrier(gpu, cmd, tex, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                 access, layout, false);
 
@@ -1416,6 +1420,24 @@ void pl_vulkan_release(const struct pl_gpu *gpu, const struct pl_tex *tex,
     tex_vk->current_layout = layout;
     tex_vk->current_access = access;
     tex_vk->held = false;
+}
+
+void pl_vulkan_pin(const struct pl_gpu *gpu, const struct pl_tex *tex,
+                   VkImageLayout layout, VkAccessFlags access,
+                   VkSemaphore sem_in)
+{
+    struct pl_tex_vk *tex_vk = TA_PRIV(tex);
+    if (!tex_vk->held) {
+        PL_ERR(gpu, "Attempting to pin an unheld image?");
+        return;
+    }
+
+    pl_tex_vk_external_dep(gpu, tex, sem_in);
+
+    tex_vk->current_layout = layout;
+    tex_vk->current_access = access;
+    tex_vk->held = false;
+    tex_vk->pinned = true;
 }
 
 // For pl_buf.priv
