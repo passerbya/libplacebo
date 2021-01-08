@@ -51,6 +51,7 @@
 #include "include/libplacebo/shaders/av1.h"
 #include "include/libplacebo/shaders/colorspace.h"
 #include "include/libplacebo/shaders/custom.h"
+#include "include/libplacebo/shaders/motion.h"
 #include "include/libplacebo/shaders/sampling.h"
 #include "include/libplacebo/swapchain.h"
 #include "include/libplacebo/utils/upload.h"

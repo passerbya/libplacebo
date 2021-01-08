@@ -11,10 +11,6 @@ static void pl_buffer_tests(const struct pl_gpu *gpu)
     if (buf_size > gpu->limits.max_buf_size)
         return;
 
-    memset(test_dst, 0, buf_size);
-    for (int i = 0; i < buf_size; i++)
-        test_src[i] = (RANDOM * 256);
-
     const struct pl_buf *buf = NULL, *tbuf = NULL;
 
     printf("test buffer static creation and readback\n");
@@ -158,8 +154,10 @@ static void pl_test_roundtrip(const struct pl_gpu *gpu, const struct pl_tex *tex
 
 static void pl_texture_tests(const struct pl_gpu *gpu)
 {
+    const struct pl_fmt *fmt;
+
     for (int f = 0; f < gpu->num_formats; f++) {
-        const struct pl_fmt *fmt = gpu->formats[f];
+        fmt = gpu->formats[f];
         if (fmt->opaque || !(fmt->caps & PL_FMT_CAP_HOST_READABLE))
             continue;
 
@@ -213,6 +211,33 @@ static void pl_texture_tests(const struct pl_gpu *gpu)
                 pl_tex_destroy(gpu, &tex[i]);
         }
     }
+
+    // Test mipmap generation
+    fmt = pl_find_fmt(gpu, PL_FMT_FLOAT, 4, 0, 32, PL_FMT_CAP_BLITTABLE | PL_FMT_CAP_LINEAR);
+    if (!fmt)
+        return;
+
+    assert(128 * 32 * fmt->texel_size <= sizeof(test_src));
+    const struct pl_tex *tex = pl_tex_create(gpu, &(struct pl_tex_params) {
+        .w = 128,
+        .h = 32,
+        .format = fmt,
+        .blit_src = true,
+        .initial_data = test_src,
+    });
+    REQUIRE(tex);
+
+    const struct pl_tex_stack *stack = pl_tex_stack_create(gpu, tex);
+    REQUIRE(stack);
+    REQUIRE(stack->num_levels == 8);
+    for (int i = 0; i < stack->num_levels; i++) {
+        const struct pl_tex *level = stack->levels[i];
+        REQUIRE(level->params.w == tex->params.w >> i);
+        REQUIRE(level->params.h >= 1);
+    }
+
+    pl_tex_stack_destroy(gpu, &stack);
+    pl_tex_destroy(gpu, &tex);
 }
 
 static void pl_shader_tests(const struct pl_gpu *gpu)
@@ -1135,6 +1160,10 @@ error:
 
 static void gpu_tests(const struct pl_gpu *gpu)
 {
+    // Intialize `test_src`
+    for (int i = 0; i < sizeof(test_src); i++)
+        test_src[i] = (RANDOM * 256);
+
     pl_buffer_tests(gpu);
     pl_texture_tests(gpu);
     pl_shader_tests(gpu);
