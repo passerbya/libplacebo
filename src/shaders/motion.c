@@ -92,3 +92,47 @@ error:
     pl_tex_stack_destroy(gpu, (const struct pl_tex_stack **) &stack);
     return NULL;
 }
+
+// Defines a function of signature:
+//   int sad(isampler2D a, isampler2D b, ivec2 base)
+static ident_t sh_sad(struct pl_shader *sh, int width, int height)
+{
+    if (!sh_try_compute(sh, width, height, true, sizeof(int32_t)))
+        return NULL;
+
+    ident_t wg_sum = sh_fresh(sh, "wg_sum"), func = sh_fresh(sh, "sad");
+
+    GLSLH("shared int %s;                                                       \n"
+          "int %s(isampler2D a, isampler2D b, ivec2 base) {                     \n"
+          "    %s = 0;                                                          \n"
+          "    int thread_sum = 0;                                              \n"
+          // Divide the pixels among the threads, sum each thread individually
+          "    uint tcount = gl_WorkGroupSize.x * gl_WorkGroupSize.y;           \n"
+          "    for (uint i = gl_LocalInvocationIndex; i < %du; i += tcount) {   \n"
+          "        ivec2 pos = base + ivec2(i %% %du, i / %du);                 \n"
+          "        int d = texelFetch(a, pos, 0).x - texelFetch(b, pos, 0).x;   \n"
+          "        thread_sum += abs(d);                                        \n"
+          "    }                                                                \n",
+          wg_sum, func, wg_sum, width * height, width, width);
+
+    // If we have subgroups, perform a subgroup add before using shmem atomics
+    if (SH_GPU(sh)->caps & PL_GPU_CAP_SUBGROUPS) {
+        GLSLH("    int group_sum = subgroupAdd(thread_sum); \n"
+              "    if (subgroupElect()) {                   \n"
+              "        atomicAdd(%s, group_sum);            \n"
+              "        memoryBarrierShared();               \n"
+              "    }                                        \n",
+              wg_sum);
+    } else {
+        GLSLH("    atomicAdd(%s, thread_sum); \n"
+              "    memoryBarrierShared();     \n",
+              wg_sum);
+    }
+
+    GLSLH("    barrier(); \n"
+          "    return %s; \n"
+          "}              \n",
+          wg_sum);
+
+    return func;
+}
