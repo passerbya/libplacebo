@@ -94,7 +94,9 @@ error:
 }
 
 // Defines a function of signature:
-//   int sad(isampler2D a, isampler2D b, ivec2 base)
+//   int sad(isampler2D a, isampler2D b, ivec2 base, ivec2 delta)
+//
+// Compares between tex(a, base) and tex(b, base+delta)
 static ident_t sh_sad(struct pl_shader *sh, int width, int height)
 {
     if (!sh_try_compute(sh, width, height, true, sizeof(int32_t)))
@@ -103,15 +105,16 @@ static ident_t sh_sad(struct pl_shader *sh, int width, int height)
     ident_t wg_sum = sh_fresh(sh, "wg_sum"), func = sh_fresh(sh, "sad");
 
     GLSLH("shared int %s;                                                       \n"
-          "int %s(isampler2D a, isampler2D b, ivec2 base) {                     \n"
+          "int %s(isampler2D a, isampler2D b, ivec2 base, ivec2 delta) {        \n"
+          "    barrier();                                                       \n"
           "    %s = 0;                                                          \n"
           "    int thread_sum = 0;                                              \n"
           // Divide the pixels among the threads, sum each thread individually
           "    uint tcount = gl_WorkGroupSize.x * gl_WorkGroupSize.y;           \n"
           "    for (uint i = gl_LocalInvocationIndex; i < %du; i += tcount) {   \n"
           "        ivec2 pos = base + ivec2(i %% %du, i / %du);                 \n"
-          "        int d = texelFetch(a, pos, 0).x - texelFetch(b, pos, 0).x;   \n"
-          "        thread_sum += abs(d);                                        \n"
+          "        thread_sum += abs(texelFetch(a, pos, 0).x -                  \n"
+          "                          texelFetch(b, pos + delta, 0).x);          \n"
           "    }                                                                \n",
           wg_sum, func, wg_sum, width * height, width, width);
 
@@ -136,3 +139,83 @@ static ident_t sh_sad(struct pl_shader *sh, int width, int height)
 
     return func;
 }
+
+// Defines a function of signature:
+//
+//   int refine(isampler2D a, isampler2D b, ivec2 base, inout ivec2 delta)
+//
+// Refines the mvec in `delta` and returns the best SAD
+static ident_t sh_refine(struct pl_shader *sh, int width, int height, int radius)
+{
+    ident_t sad = sh_sad(sh, width, height);
+    if (!sad)
+        return NULL;
+
+    ident_t func = sh_fresh(sh, "refine");
+    GLSLH("int %s(isampler2D a, isampler2D b, ivec2 base, inout ivec2 delta) {  \n"
+          "    ivec2 best = delta;                                              \n"
+          "    int best_sad = %s(a, b, base, best);                             \n"
+          "    ivec2 test;                                                      \n"
+          "    int sad;                                                         \n",
+          func, sad);
+
+#define TEST_MV(dx, dy)                               \
+    do {                                              \
+        GLSLH("    test = delta + ivec2(%d, %d); \n"  \
+              "    sad = %s(a, b, base, test);   \n"  \
+              "    if (sad < best_sad) {         \n"  \
+              "        best_sad = sad;           \n"  \
+              "        best = test;              \n"  \
+              "    }                             \n", \
+              (dx), (dy), sad);                       \
+    } while (0)
+
+    // Exhaustive search
+    // TODO: Use better search pattern!
+    for (int i = 1; i <= radius; i++) {
+        // Orthogonals
+        TEST_MV( i, 0);
+        TEST_MV(-i, 0);
+        TEST_MV( 0, i);
+        TEST_MV( 0,-i);
+
+        // Diagonals
+        TEST_MV( i, i);
+        TEST_MV(-i, i);
+        TEST_MV( i,-i);
+        TEST_MV(-i,-i);
+    }
+
+    GLSLH("    delta = best;    \n"
+          "    return best_sad; \n"
+          "}                    \n");
+
+    return func;
+}
+
+/*
+const int nBlkSizeX = 8;
+const int nBlkSizeY = 8;
+const int levels = 0;
+const int searchType = 4;
+const int searchTypeCoarse = 3;
+const int searchparam = 2;
+const int nPelSearch = 0;
+const int nDeltaFrame = 1;
+
+const bool truemotion = true;
+const int nLambda = 1000 * nBlkSizeX * nBlkSizeY / 64;
+const int lsad = 1200;
+const int plevel = 1;
+
+const int pglobal = 0
+const int overlap = 0;
+const bool divide = false;
+const int badsad = 10000;
+const int badrange = 24;
+const bool opt = true;
+const bool meander = true;
+const bool trymany = false;
+const bool fields = false;
+const int dct = 0;
+*/
