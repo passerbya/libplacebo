@@ -80,12 +80,19 @@ struct pl_hdr_metadata {
     float max_fall;               // max frame average light level (in cd/m²)
 };
 
+extern const struct pl_hdr_metadata pl_hdr_metadata_empty; // equal to {0}
+extern const struct pl_hdr_metadata pl_hdr_metadata_hdr10; // generic HDR10 display
+
+// Returns whether two sets of HDR metadata are exactly identical.
+bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *a,
+                           const struct pl_hdr_metadata *b);
+
 // Attempt setting the HDR metadata of the display to the given struct. Returns
 // false if HDR metadata is not supported by the swapchain or hardware.
 //
 // This can be called on `NULL` to effectively query for HDR support without
 // attempting to change anything. Such usage is a no-op. To "reset" metadata
-// after having set it, call this with a {0} struct.
+// after having set it, set it to a {0} struct (or `pl_hdr_metadata_empty`).
 bool pl_swapchain_hdr_metadata(pl_swapchain sw, const struct pl_hdr_metadata *metadata);
 
 // The struct used to hold the results of `pl_swapchain_start_frame`

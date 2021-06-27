@@ -44,6 +44,7 @@ struct priv {
     struct pl_color_repr color_repr;
     struct pl_color_space color_space;
     struct pl_hdr_metadata hdr_metadata;
+    bool pseudo_hdr10;
 
     // state of the images:
     PL_ARRAY(pl_tex) images;        // pl_tex wrappers for the VkImages
@@ -145,56 +146,78 @@ static bool vk_map_color_space(VkColorSpaceKHR space, struct pl_color_space *out
     }
 }
 
-static bool pick_surf_format(pl_gpu gpu, const struct vk_ctx *vk,
-                             VkSurfaceKHR surf, bool prefer_hdr,
+static bool pick_surf_format(pl_swapchain sw,
                              VkSurfaceFormatKHR *out_format,
-                             struct pl_color_space *out_space)
+                             struct pl_color_space *out_space,
+                             bool *is_pseudo_hdr10)
 {
+    struct priv *p = PL_PRIV(sw);
+    struct vk_ctx *vk = p->vk;
+
+    PL_ARRAY(VkSurfaceFormatKHR) formats = {0};
     int best_score = 0, best_id;
-    VkSurfaceFormatKHR *formats = NULL;
-    int num = 0;
 
     // Specific format requested by user
     if (out_format->format) {
         if (vk_map_color_space(out_format->colorSpace, out_space)) {
-            PL_INFO(gpu, "Using user-supplied surface configuration: %s + %s",
+            PL_INFO(sw, "Using user-supplied surface configuration: %s + %s",
                     vk_fmt_name(out_format->format),
                     vk_csp_name(out_format->colorSpace));
             return true;
         } else {
-            PL_ERR(gpu, "User-supplied surface format unsupported: %s",
+            PL_ERR(sw, "User-supplied surface format unsupported: %s",
                    vk_fmt_name(out_format->format));
         }
     }
 
-    VK(vk->GetPhysicalDeviceSurfaceFormatsKHR(vk->physd, surf, &num, NULL));
-    formats = pl_calloc_ptr(NULL, num, formats);
-    VK(vk->GetPhysicalDeviceSurfaceFormatsKHR(vk->physd, surf, &num, formats));
+    VK(vk->GetPhysicalDeviceSurfaceFormatsKHR(vk->physd, p->surf, &formats.num, NULL));
+    PL_ARRAY_RESIZE(NULL, formats, formats.num);
+    VK(vk->GetPhysicalDeviceSurfaceFormatsKHR(vk->physd, p->surf, &formats.num, formats.elem));
 
-    PL_INFO(gpu, "Available surface configurations:");
-    for (int i = 0; i < num; i++) {
-        PL_INFO(gpu, "    %d: %-40s %s", i,
-                vk_fmt_name(formats[i].format),
-                vk_csp_name(formats[i].colorSpace));
+    bool has_native_hdr10 = false;
+    for (int i = 0; i < formats.num; i++) {
+        if (formats.elem[i].colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) {
+            has_native_hdr10 = true;
+            break;
+        }
     }
 
-    for (int i = 0; i < num; i++) {
-        // A value of VK_FORMAT_UNDEFINED means we can pick anything we want
-        if (formats[i].format == VK_FORMAT_UNDEFINED) {
-            *out_format = (VkSurfaceFormatKHR) {
-                .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-                .format = VK_FORMAT_R8G8B8A8_UNORM,
-            };
-            pl_free(formats);
-            return true;
-        }
+    bool pseudo_hdr10 = vk->SetHdrMetadataEXT && !has_native_hdr10;
+    if (pseudo_hdr10) {
+        // Since SetHdrMetadataEXT in practice also force-enables HDR10 mode
+        // irrespective of the actual specified color space, we simulate this
+        // scenario by simply duplicating the formats with HDR10 colorspace
+        for (int i = 0; i < formats.num; i++) {
+            // prevent duplicates
+            VkFormat fmt = formats.elem[i].format;
+            for (int j = 0; j < i; j++) {
+                if (formats.elem[j].format == fmt)
+                    goto next_fmt;
+            }
 
+            PL_ARRAY_INSERT_AT(NULL, formats, ++i, (VkSurfaceFormatKHR) {
+                .format = fmt,
+                .colorSpace = VK_COLOR_SPACE_HDR10_ST2084_EXT,
+            });
+
+next_fmt: ;
+        }
+    }
+
+    PL_INFO(sw, "Available surface configurations:");
+    for (int i = 0; i < formats.num; i++) {
+        PL_INFO(sw, "    %d: %-40s %s", i,
+                vk_fmt_name(formats.elem[i].format),
+                vk_csp_name(formats.elem[i].colorSpace));
+    }
+
+    for (int i = 0; i < formats.num; i++) {
         // Color space / format whitelist
         struct pl_color_space space;
-        if (!vk_map_color_space(formats[i].colorSpace, &space))
+        if (!vk_map_color_space(formats.elem[i].colorSpace, &space))
             continue;
 
-        switch (formats[i].format) {
+        switch (formats.elem[i].format) {
         // Only accept floating point formats for linear curves
         case VK_FORMAT_R16G16B16_SFLOAT:
         case VK_FORMAT_R16G16B16A16_SFLOAT:
@@ -232,10 +255,10 @@ static bool pick_surf_format(pl_gpu gpu, const struct vk_ctx *vk,
         }
 
         // Make sure we can wrap this format to a meaningful, valid pl_fmt
-        for (int n = 0; n < gpu->num_formats; n++) {
-            pl_fmt plfmt = gpu->formats[n];
+        for (int n = 0; n < sw->gpu->num_formats; n++) {
+            pl_fmt plfmt = sw->gpu->formats[n];
             const struct vk_format **pvkfmt = PL_PRIV(plfmt);
-            if ((*pvkfmt)->tfmt != formats[i].format)
+            if ((*pvkfmt)->tfmt != formats.elem[i].format)
                 continue;
 
             enum pl_fmt_caps render_caps = 0;
@@ -248,7 +271,7 @@ static bool pick_surf_format(pl_gpu gpu, const struct vk_ctx *vk,
             int score = 0;
             for (int c = 0; c < 3; c++)
                 score += plfmt->component_depth[c];
-            if (pl_color_transfer_is_hdr(space.transfer) == prefer_hdr)
+            if (pl_color_transfer_is_hdr(space.transfer) == p->params.prefer_hdr)
                 score += 10000;
 
             switch (plfmt->type) {
@@ -262,8 +285,9 @@ static bool pick_surf_format(pl_gpu gpu, const struct vk_ctx *vk,
             };
 
             if (score > best_score) {
-                *out_format = formats[i];
+                *out_format = formats.elem[i];
                 *out_space = space;
+                *is_pseudo_hdr10 = space.transfer == PL_COLOR_TRC_PQ && pseudo_hdr10;
                 best_score = score;
                 best_id = i;
                 break;
@@ -271,14 +295,17 @@ static bool pick_surf_format(pl_gpu gpu, const struct vk_ctx *vk,
         }
     }
 
-    if (best_score)
-        PL_INFO(gpu, "Picked surface configuration %d", best_id);
+    if (best_score) {
+        PL_INFO(sw, "Picked surface configuration %d", best_id);
+        if (*is_pseudo_hdr10)
+            PL_INFO(sw, "Pseudo-HDR mode enabled, setting generic metadata.");
+    }
 
     // fall through
 error:
     if (!best_score)
-        PL_FATAL(vk, "Failed picking any valid, renderable surface format!");
-    pl_free(formats);
+        PL_FATAL(sw, "Failed picking any valid, renderable surface format!");
+    pl_free(formats.elem);
     return best_score > 0;
 }
 
@@ -293,11 +320,6 @@ pl_swapchain pl_vulkan_create_swapchain(pl_vulkan plvk,
         return NULL;
     }
 
-    VkSurfaceFormatKHR sfmt = params->surface_format;
-    struct pl_color_space csp;
-    if (!pick_surf_format(gpu, vk, params->surface, params->prefer_hdr, &sfmt, &csp))
-        return NULL;
-
     struct pl_swapchain *sw = pl_zalloc_obj(NULL, sw, struct priv);
     sw->impl = &vulkan_swapchain;
     sw->log = vk->log;
@@ -311,11 +333,17 @@ pl_swapchain pl_vulkan_create_swapchain(pl_vulkan plvk,
     p->surf = params->surface;
     p->swapchain_depth = PL_DEF(params->swapchain_depth, 3);
     pl_assert(p->swapchain_depth > 0);
+
+    VkSurfaceFormatKHR sfmt = params->surface_format;
+    struct pl_color_space csp;
+    if (!pick_surf_format(sw, &sfmt, &csp, &p->pseudo_hdr10))
+        return NULL;
+
     p->protoInfo = (VkSwapchainCreateInfoKHR) {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = p->surf,
         .imageFormat = sfmt.format,
-        .imageColorSpace = sfmt.colorSpace,
+        .imageColorSpace = p->pseudo_hdr10 ? 0 : sfmt.colorSpace,
         .imageArrayLayers = 1, // non-stereoscopic
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .minImageCount = p->swapchain_depth + 1, // +1 for the FB
@@ -343,7 +371,7 @@ pl_swapchain pl_vulkan_create_swapchain(pl_vulkan plvk,
     pl_free_ptr(&modes);
 
     if (!supported) {
-        PL_WARN(vk, "Requested swap mode unsupported by this device, falling "
+        PL_WARN(sw, "Requested swap mode unsupported by this device, falling "
                 "back to VK_PRESENT_MODE_FIFO_KHR");
         p->protoInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     }
@@ -814,6 +842,30 @@ static bool vk_sw_resize(pl_swapchain sw, int *width, int *height)
     return ok;
 }
 
+const struct pl_hdr_metadata pl_hdr_metadata_empty = {0};
+const struct pl_hdr_metadata pl_hdr_metadata_hdr10 ={
+    .prim = {
+        .red   = {0.708,    0.292},
+        .green = {0.170,    0.797},
+        .blue  = {0.131,    0.046},
+        .white = {0.31271,  0.32902},
+    },
+    .min_luma = 0,
+    .max_luma = 10000,
+    .max_cll  = 10000,
+    .max_fall = 0, // unknown
+};
+
+bool pl_hdr_metadata_equal(const struct pl_hdr_metadata *a,
+                           const struct pl_hdr_metadata *b)
+{
+    return pl_raw_primaries_equal(&a->prim, &b->prim) &&
+           a->min_luma == b->min_luma &&
+           a->max_luma == b->max_luma &&
+           a->max_cll  == b->max_cll  &&
+           a->max_fall == b->max_fall;
+}
+
 static bool vk_sw_hdr_metadata(pl_swapchain sw,
                                const struct pl_hdr_metadata *metadata)
 {
@@ -837,6 +889,11 @@ static bool vk_sw_hdr_metadata(pl_swapchain sw,
         pthread_mutex_unlock(&p->lock);
         return true;
     }
+
+    // In pseudo-HDR10 mode, we need to replace empty metadata by default
+    // metadata, to make sure the swapchain always has valid metadata.
+    if (p->pseudo_hdr10 && pl_hdr_metadata_equal(metadata, &pl_hdr_metadata_empty))
+        metadata = &pl_hdr_metadata_hdr10;
 
     // Remember the metadata so we can re-apply it after swapchain recreation
     p->hdr_metadata = *metadata;
