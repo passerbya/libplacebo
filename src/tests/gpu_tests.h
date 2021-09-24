@@ -84,6 +84,69 @@ static void test_cb(void *priv)
     *flag = true;
 }
 
+static bool fuzzy_fmt_eq(const uint8_t *src, const uint8_t *dst,
+                         pl_fmt fmt, int texels)
+{
+
+#define LOAD(type)                      \
+    a = *(type *)(src + texel_offset);  \
+    b = *(type *)(dst + texel_offset);
+
+    for (int i = 0; i < texels; i++) {
+        size_t texel_offset = 0;
+
+        for (int c = 0; c < fmt->num_components; c++) {
+            switch (fmt->type) {
+            case PL_FMT_UNORM:
+            case PL_FMT_SNORM:
+            case PL_FMT_UINT:
+            case PL_FMT_SINT: {
+                int64_t a, b;
+                switch (fmt->host_bits[c]) {
+                case 8: LOAD(int8_t); break;
+                case 16: LOAD(int16_t); break;
+                case 32: LOAD(int32_t); break;
+                case 64: LOAD(int64_t); break;
+                default: goto fallback;
+                }
+                if (llabs(a - b) > 1) // allow off-by-one (rounding error)
+                    return false;
+                break;
+            }
+            case PL_FMT_FLOAT: {
+                double a, b;
+                switch (fmt->host_bits[c]) {
+                case 32: LOAD(float); break;
+                case 64: LOAD(double); break;
+                default: goto fallback;
+                }
+                if (fmt->component_depth[c] == 16) // special case for 16f
+                    a = PL_CLAMP(a, -65504.0, 65504.0);
+                if (fabs(a - b) > 1e-2 * fmax(1.0, fabs(a))) // allow deviation of 1%
+                    return false;
+                break;
+            }
+            case PL_FMT_UNKNOWN:
+            case PL_FMT_TYPE_COUNT:
+                goto fallback;
+            }
+
+            texel_offset += fmt->host_bits[c] / 8;
+        }
+
+        src += fmt->texel_size;
+        dst += fmt->texel_size;
+    }
+
+#undef LOAD
+
+    return true;
+
+fallback:
+    // No easy way to compare non-standard formats, ignore the problem
+    return true;
+}
+
 static void pl_test_roundtrip(pl_gpu gpu, pl_tex tex[2],
                               uint8_t *src, uint8_t *dst)
 {
@@ -141,10 +204,8 @@ static void pl_test_roundtrip(pl_gpu gpu, pl_tex tex[2],
     if (gpu->limits.callbacks)
         REQUIRE(ran_ul && ran_dl);
 
-    if (fmt->emulated && fmt->type == PL_FMT_FLOAT) {
-        // TODO: can't memcmp here because bits might be lost due to the
-        // emulated 16/32 bit upload paths, figure out a better way to
-        // generate data and verify the roundtrip!
+    if ((fmt->emulated && fmt->type == PL_FMT_FLOAT) || gpu->glsl.gles) {
+        REQUIRE(fuzzy_fmt_eq(src, dst, fmt, texels));
     } else {
         REQUIRE(memcmp(src, dst, bytes) == 0);
     }
