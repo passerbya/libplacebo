@@ -83,6 +83,9 @@ struct pl_dispatch_params {
     // entire texture will be rendered to.
     struct pl_rect2d rect;
 
+    // Rotation of the target rect with respect to the target.
+    enum pl_rotation rotation;
+
     // If set, enables and controls the blending for this pass. Optional. When
     // using this with fragment shaders, `target->params.fmt->caps` must
     // include `PL_FMT_CAP_BLENDABLE`.

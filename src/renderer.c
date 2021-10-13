@@ -2048,6 +2048,7 @@ fallback:
             .shader = &sh,
             .target = plane->texture,
             .blend_params = params->blend_params,
+            .rotation = target->rotation,
             .rect = {
                 .x0 = flipped_x ? rx1 : rx0,
                 .y0 = flipped_y ? ry1 : ry0,
@@ -2255,6 +2256,13 @@ static void fix_refs_and_rects(struct pass_state *pass)
             pl_unreachable();
         }
     }
+
+    // Move rotation from the source plane to the target plane
+    pl_assert(image->rotation >= 0 && image->rotation < PL_ROTATION_COUNT);
+    pl_assert(target->rotation >= 0 && target->rotation < PL_ROTATION_COUNT);
+    target->rotation -= image->rotation;
+    target->rotation = (target->rotation + PL_ROTATION_COUNT) % PL_ROTATION_COUNT;
+    image->rotation = PL_ROTATION_0;
 
     // Fix the rendering rects
     struct pl_rect2df *src = &image->crop, *dst = &target->crop;

@@ -449,6 +449,13 @@ struct pl_frame {
     // the aspect ratio, use a dedicated function like pl_rect2df_aspect_copy.
     struct pl_rect2df crop;
 
+    // Logical rotation of `crop` with respect to the frame.
+    //
+    // Note: 180° rotation is equivalent to swapping crop.x0/x1 and crop.y0/y1,
+    // respectively. 90° rotation is equivalent to transposing x and y during
+    // sampling.
+    enum pl_rotation rotation;
+
     // A list of additional overlays to render directly on top of this frame.
     // These overlays will be treated as though they were part of the frame
     // data, and can be used for things like subtitles or on-screen displays.

@@ -998,10 +998,19 @@ static void compute_vertex_attribs(pl_dispatch dp, pl_shader sh,
 }
 
 static void translate_compute_shader(pl_dispatch dp, pl_shader sh,
-                                     const struct pl_rect2d *rc,
+                                     const struct pl_rect2d *rect,
                                      const struct pl_dispatch_params *params)
 {
-    int width = abs(pl_rect_w(*rc)), height = abs(pl_rect_h(*rc));
+    struct pl_rect2d rc = *rect;
+    enum pl_rotation rot = params->rotation;
+    pl_assert(rot >= PL_ROTATION_0 && rot < PL_ROTATION_COUNT);
+    if (rot >= PL_ROTATION_180) {
+        rot -= PL_ROTATION_180;
+        PL_SWAP(rc.x0, rc.x1);
+        PL_SWAP(rc.y0, rc.y1);
+    }
+
+    int width = abs(pl_rect_w(rc)), height = abs(pl_rect_h(rc));
     ident_t out_scale;
     compute_vertex_attribs(dp, sh, width, height, &out_scale);
 
@@ -1019,7 +1028,7 @@ static void translate_compute_shader(pl_dispatch dp, pl_shader sh,
     });
 
     ident_t base = sh_var(sh, (struct pl_shader_var) {
-        .data    = &(int[2]){ rc->x0, rc->y0 },
+        .data    = &(int[2]){ rc.x0, rc.y0 },
         .dynamic = true,
         .var     = {
             .name  = "base",
@@ -1030,10 +1039,11 @@ static void translate_compute_shader(pl_dispatch dp, pl_shader sh,
         },
     });
 
-    int dx = rc->x0 > rc->x1 ? -1 : 1, dy = rc->y0 > rc->y1 ? -1 : 1;
+    int dx = rc.x0 > rc.x1 ? -1 : 1, dy = rc.y0 > rc.y1 ? -1 : 1;
+    const char *swap = rot == PL_ROTATION_90 ? "yx" : "xy";
     GLSL("ivec2 dir = ivec2(%d, %d);\n", dx, dy); // hard-code, not worth var
-    GLSL("ivec2 pos = %s + dir * ivec2(gl_GlobalInvocationID);\n", base);
-    GLSL("vec2 fpos = %s * vec2(gl_GlobalInvocationID);\n", out_scale);
+    GLSL("ivec2 pos = %s + dir * ivec2(gl_GlobalInvocationID).%s;\n", base, swap);
+    GLSL("vec2 fpos = %s * vec2(gl_GlobalInvocationID).%s;\n", out_scale, swap);
     GLSL("if (max(fpos.x, fpos.y) < 1.0) {\n");
     if (params->blend_params) {
         GLSL("vec4 orig = imageLoad(%s, pos);\n", fbo);
@@ -1179,7 +1189,7 @@ bool pl_dispatch_finish(pl_dispatch dp, const struct pl_dispatch_params *params)
         translate_compute_shader(dp, sh, &rc, params);
     } else {
         // Add the vertex information encoding the position
-        vert_pos = sh_attr_vec2(sh, "position", &(const struct pl_rect2df) {
+        vert_pos = sh_attr_vec2(sh, "position", params->rotation, &(struct pl_rect2df) {
             .x0 = 2.0 * rc.x0 / tpars->w - 1.0,
             .y0 = 2.0 * rc.y0 / tpars->h - 1.0,
             .x1 = 2.0 * rc.x1 / tpars->w - 1.0,

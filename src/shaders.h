@@ -103,7 +103,7 @@ ident_t sh_const_float(pl_shader sh, const char *name, float val);
 #define SH_FLOAT(val)   sh_const_float(sh, "const", val)
 
 // Add a new vec2 vertex attribute from a pl_rect2df, or returns NULL on failure.
-ident_t sh_attr_vec2(pl_shader sh, const char *name,
+ident_t sh_attr_vec2(pl_shader sh, const char *name, enum pl_rotation rot,
                      const struct pl_rect2df *rc);
 
 // Bind a texture under a given transformation and make its attributes

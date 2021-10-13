@@ -71,6 +71,7 @@ struct plplay {
     struct pl_cone_params cone_params;
     struct pl_color_space target_color;
     struct pl_color_repr target_repr;
+    enum pl_rotation target_rot;
     bool target_override;
     bool levels_override;
 
@@ -340,7 +341,8 @@ static bool render_frame(struct plplay *p, const struct pl_swapchain_frame *fram
     double dar = pl_rect2df_aspect(&mix->frames[0]->crop);
     if (avframe->sample_aspect_ratio.num)
         dar *= av_q2d(avframe->sample_aspect_ratio);
-    pl_rect2df_aspect_set(&target.crop, dar, 0.0);
+    pl_rect2df_aspect_set(&target.crop, pl_aspect_rotate(dar, p->target_rot), 0.0);
+    target.rotation = p->target_rot;
 
     if (!pl_render_image_mix(p->renderer, mix, &target, &p->params))
         return false;
@@ -974,11 +976,23 @@ static void update_settings(struct plplay *p)
             nk_tree_pop(nk);
         }
 
-        if (nk_tree_push(nk, NK_TREE_NODE, "Output color override", NK_MINIMIZED)) {
+        if (nk_tree_push(nk, NK_TREE_NODE, "Output", NK_MINIMIZED)) {
             struct pl_color_space *tcol = &p->target_color;
             struct pl_color_repr *trepr = &p->target_repr;
             nk_layout_row_dynamic(nk, 24, 2);
-            nk_checkbox_label(nk, "Enable", &p->target_override);
+
+            static const char *rotations[PL_ROTATION_COUNT] = {
+                [PL_ROTATION_0]   = "0°",
+                [PL_ROTATION_90]  = "90°",
+                [PL_ROTATION_180] = "180°",
+                [PL_ROTATION_270] = "270°",
+            };
+
+            nk_label(nk, "Rotation:", NK_TEXT_LEFT);
+            p->target_rot = nk_combo(nk, rotations, PL_ROTATION_COUNT, p->target_rot,
+                                     16, nk_vec2(nk_widget_width(nk), 100));
+
+            nk_checkbox_label(nk, "Override colorspace", &p->target_override);
             bool reset = nk_button_label(nk, "Reset settings");
 
             nk_layout_row(nk, NK_DYNAMIC, 24, 2, (float[]){ 0.3, 0.7 });

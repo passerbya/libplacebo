@@ -296,7 +296,7 @@ ident_t sh_const_float(pl_shader sh, const char *name, float val)
 }
 
 
-ident_t sh_attr_vec2(pl_shader sh, const char *name,
+ident_t sh_attr_vec2(pl_shader sh, const char *name, enum pl_rotation rot,
                      const struct pl_rect2df *rc)
 {
     pl_gpu gpu = SH_GPU(sh);
@@ -311,20 +311,34 @@ ident_t sh_attr_vec2(pl_shader sh, const char *name,
         return NULL;
     }
 
-    float vals[4][2] = {
-        { rc->x0, rc->y0 },
-        { rc->x1, rc->y0 },
-        { rc->x0, rc->y1 },
-        { rc->x1, rc->y1 },
+    const float points[4][2] = {
+        { rc->x0, rc->y0 }, // top left
+        { rc->x1, rc->y0 }, // top right
+        { rc->x0, rc->y1 }, // bottom left
+        { rc->x1, rc->y1 }, // bottom right
     };
 
-    float *data = pl_memdup(SH_TMP(sh), &vals[0][0], sizeof(vals));
+    static const int indices[PL_ROTATION_COUNT][4] = {
+        [PL_ROTATION_0]   = {0, 1, 2, 3},
+        [PL_ROTATION_90]  = {1, 3, 0, 2},
+        [PL_ROTATION_180] = {3, 2, 1, 0},
+        [PL_ROTATION_270] = {2, 0, 3, 1},
+    };
+
+    pl_assert(rot >= PL_ROTATION_0 && rot < PL_ROTATION_COUNT);
+    float *data = pl_memdup(SH_TMP(sh), &points[0][0], sizeof(points));
+    const int *idx = indices[rot];
+
     struct pl_shader_va va = {
         .attr = {
             .name     = sh_fresh(sh, name),
             .fmt      = pl_find_vertex_fmt(gpu, PL_FMT_FLOAT, 2),
         },
-        .data = { &data[0], &data[2], &data[4], &data[6] },
+        .data = {
+            // The *2 is because each point has two floats
+            &data[idx[0] * 2], &data[idx[1] * 2],
+            &data[idx[2] * 2], &data[idx[3] * 2],
+        },
     };
 
     PL_ARRAY_APPEND(sh, sh->vas, va);
@@ -375,7 +389,7 @@ ident_t sh_bind(pl_shader sh, pl_tex tex,
         };
 
         rect = PL_DEF(rect, &full);
-        *out_pos = sh_attr_vec2(sh, "tex_coord", &(struct pl_rect2df) {
+        *out_pos = sh_attr_vec2(sh, "tex_coord", PL_ROTATION_0, &(struct pl_rect2df) {
             .x0 = sx * rect->x0, .y0 = sy * rect->y0,
             .x1 = sx * rect->x1, .y1 = sy * rect->y1,
         });

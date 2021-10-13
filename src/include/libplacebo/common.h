@@ -195,6 +195,26 @@ void pl_rect2df_offset(struct pl_rect2df *rc, float offset_x, float offset_y);
 // Scale a rect uniformly in both dimensions.
 #define pl_rect2df_zoom(rc, zoom) pl_rect2df_stretch((rc), (zoom), (zoom))
 
+// Rotation in degrees clockwise
+enum pl_rotation {
+    PL_ROTATION_0 = 0,
+    PL_ROTATION_90,
+    PL_ROTATION_180,
+    PL_ROTATION_270,
+    PL_ROTATION_COUNT
+};
+
+// Returns the inverted aspect, for 90° / 270° rotations
+static inline float pl_aspect_rotate(float aspect, enum pl_rotation rot)
+{
+    return (rot % 2) ? 1.0 / aspect : aspect;
+}
+
+#define pl_rect2df_aspect_copy_rot(rc, src, panscan, rot)                   \
+    pl_rect2df_aspect_set((rc), pl_aspect_rotate(pl_rect2df_aspect(src),    \
+                          (rot), (panscan))
+
+
 PL_API_END
 
 #endif // LIBPLACEBO_COMMON_H_
