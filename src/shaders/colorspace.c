@@ -1159,45 +1159,43 @@ void pl_shader_color_map(pl_shader sh,
                          const struct pl_color_map_args *args)
 {
     struct pl_color_space src = args->src, dst = args->dst;
+    pl_color_space_infer(&src);
+    pl_color_space_infer_ref(&dst, &src);
+    if (pl_color_space_equal(&src, &dst)) {
+        if (args->prelinearized)
+            pl_shader_delinearize(sh, dst);
+        return;
+    }
+
     if (!sh_require(sh, PL_SHADER_SIG_COLOR, 0, 0))
         return;
 
+    sh_describe(sh, "colorspace conversion");
     GLSL("// pl_shader_color_map\n");
     GLSL("{\n");
     params = PL_DEF(params, &pl_color_map_default_params);
 
-    pl_color_space_infer(&src);
-    pl_color_space_infer_ref(&dst, &src);
-
-    if (!pl_color_space_equal(&src, &dst))
-        sh_describe(sh, "colorspace conversion");
+    struct pl_color_repr repr = args->repr;
+    pl_shader_decode_color(sh, &repr, NULL);
+    if (repr.alpha == PL_ALPHA_PREMULTIPLIED) {
+        GLSL("color.rgb /= vec3(max(color.a, 1e-6));\n");
+        repr.alpha = PL_ALPHA_INDEPENDENT;
+    }
 
     // All operations from here on require linear light as a starting point,
     // so we linearize even if src.transfer == dst.transfer when one of the other
     // operations needs it
-    bool need_linear = src.transfer != dst.transfer ||
-                       src.primaries != dst.primaries ||
-                       src.sig_peak > dst.sig_peak ||
-                       src.sig_avg != dst.sig_avg ||
-                       src.sig_floor != dst.sig_floor ||
-                       src.sig_scale != dst.sig_scale ||
-                       src.light != dst.light;
-    bool need_gamut_warn = false;
-    bool is_linear = args->prelinearized;
-    if (need_linear && !is_linear) {
+    if (!args->prelinearized)
         pl_shader_linearize(sh, src);
-        is_linear = true;
-    }
 
-    if (need_linear)
-        pl_shader_ootf(sh, src);
+    pl_shader_ootf(sh, src);
 
     // Tone map to rescale the signal average/peak/black if needed
+    bool need_gamut_warn = false;
     bool need_peak = src.sig_peak * src.sig_scale >
                      dst.sig_peak * dst.sig_scale + 1e-6;
     bool need_black = fabs(src.sig_floor * src.sig_scale -
                            dst.sig_floor * dst.sig_scale) > 1e-6;
-
 
     if (need_peak || need_black) {
         pl_shader_tone_map(sh, src, dst, need_peak, need_black,
@@ -1255,12 +1253,12 @@ void pl_shader_color_map(pl_shader sh,
              dst_max, dst_min);
     }
 
-    if (need_linear)
-        pl_shader_inverse_ootf(sh, dst);
+    pl_shader_inverse_ootf(sh, dst);
+    pl_shader_delinearize(sh, dst);
 
-    if (is_linear)
-        pl_shader_delinearize(sh, dst);
-
+    if (repr.alpha == PL_ALPHA_INDEPENDENT)
+        GLSL("color.rgb *= vec3(color.a);\n");
+    pl_shader_encode_color(sh, &args->repr);
     GLSL("}\n");
 }
 

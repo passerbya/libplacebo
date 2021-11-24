@@ -293,6 +293,10 @@ struct pl_color_map_args {
     struct pl_color_space src;
     struct pl_color_space dst;
 
+    // Representation the colors are currently in. Note that this function
+    // will currently only accept inputs in PL_COLOR_SYSTEM_RGB.
+    struct pl_color_repr repr;
+
     // If set to a valid peak detection state object (as created by
     // `pl_shader_detect_peak`), the detected values will be used in place of
     // `src.sig_peak` / `src.sig_avg`.
