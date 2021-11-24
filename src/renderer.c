@@ -812,18 +812,18 @@ static void draw_overlays(struct pass_state *pass, pl_tex fbo,
         if (use_sigmoid)
             pl_shader_sigmoidize(sh, params->sigmoid_params);
 
-        bool independent = repr.alpha == PL_ALPHA_INDEPENDENT;
+        bool premul = repr.alpha == PL_ALPHA_PREMULTIPLIED;
         pl_shader_encode_color(sh, &repr);
         if (ol.mode == PL_OVERLAY_MONOCHROME) {
             GLSL("color.%s *= %s(%s, coord).r; \n",
-                 independent ? "a" : "rgba",
+                 premul ? "rgba" : "a",
                  sh_tex_fn(sh, ol.tex->params), tex);
         }
 
         swizzle_color(sh, comps, comp_map, true);
 
         struct pl_blend_params blend_params = {
-            .src_rgb = independent ? PL_BLEND_SRC_ALPHA : PL_BLEND_ONE,
+            .src_rgb = premul ? PL_BLEND_ONE : PL_BLEND_SRC_ALPHA,
             .src_alpha = PL_BLEND_ONE,
             .dst_rgb = PL_BLEND_ONE_MINUS_SRC_ALPHA,
             .dst_alpha = PL_BLEND_ONE_MINUS_SRC_ALPHA,
@@ -1610,7 +1610,6 @@ static bool pass_read_image(struct pass_state *pass)
     // Apply LUT logic and colorspace conversion
     enum pl_lut_type lut_type = guess_frame_lut_type(image, false);
     sh = img_sh(pass, &pass->img);
-    bool needs_conversion = true;
 
     if (lut_type == PL_LUT_NATIVE || lut_type == PL_LUT_CONVERSION) {
         // Fix bit depth normalization before applying LUT
@@ -1621,12 +1620,10 @@ static bool pass_read_image(struct pass_state *pass)
         if (lut_type == PL_LUT_CONVERSION) {
             pass->img.repr.sys = PL_COLOR_SYSTEM_RGB;
             pass->img.repr.levels = PL_COLOR_LEVELS_FULL;
-            needs_conversion = false;
         }
     }
 
-    if (needs_conversion)
-        pl_shader_decode_color(sh, &pass->img.repr, params->color_adjustment);
+    pl_shader_decode_color(sh, &pass->img.repr, params->color_adjustment);
     if (lut_type == PL_LUT_NORMALIZED)
         pl_shader_custom_lut(sh, image->lut, &rr->lut_state[LUT_IMAGE]);
 
@@ -1721,6 +1718,13 @@ static bool pass_scale_main(struct pass_state *pass)
         pass_hook(pass, img, PL_HOOK_SIGMOID);
     }
 
+    // Always perform scaling in premultiplied light, to avoid color fringing
+    if (img->repr.alpha == PL_ALPHA_INDEPENDENT) {
+        pl_shader sh = img_sh(pass, img);
+        GLSL("color.rgb *= vec3(color.a); \n");
+        img->repr.alpha = PL_ALPHA_PREMULTIPLIED;
+    }
+
     pass_hook(pass, img, PL_HOOK_PRE_OVERLAY);
 
     img->tex = img_tex(pass, img);
@@ -1762,6 +1766,12 @@ static bool pass_scale_main(struct pass_state *pass)
     };
 
     pass_hook(pass, img, PL_HOOK_POST_KERNEL);
+
+    if (img->repr.alpha == PL_ALPHA_PREMULTIPLIED) {
+        sh = img_sh(pass, img);
+        GLSL("color.rgb /= vec3(max(color.a, 1e-6)); \n");
+        img->repr.alpha = PL_ALPHA_INDEPENDENT;
+    }
 
     if (use_sigmoid)
         pl_shader_unsigmoidize(img_sh(pass, img), params->sigmoid_params);

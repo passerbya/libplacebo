@@ -31,7 +31,7 @@ PL_API_BEGIN
 // "special" color systems (XYZ, BT.2020-C, etc.). If `params` is left as NULL,
 // it defaults to &pl_color_adjustment_neutral.
 //
-// Note: This function always returns PC-range RGB with pre-multiplied alpha.
+// Note: This function always returns PC-range RGB with independent alpha.
 // It mutates the pl_color_repr to reflect the change.
 void pl_shader_decode_color(pl_shader sh, struct pl_color_repr *repr,
                             const struct pl_color_adjustment *params);

@@ -28,12 +28,8 @@ void pl_shader_decode_color(pl_shader sh, struct pl_color_repr *repr,
     GLSL("// pl_shader_decode_color \n"
          "{ \n");
 
-    // For the non-linear color systems we need some special input handling
-    // to make sure we don't accidentally screw everything up because of the
-    // alpha multiplication, which only commutes with linear operations.
-    bool is_nonlinear = !pl_color_system_is_linear(repr->sys);
-    if (is_nonlinear && repr->alpha == PL_ALPHA_PREMULTIPLIED) {
-        GLSL("color.rgb /= vec3(max(color.a, 1e-6));\n");
+    if (repr->alpha == PL_ALPHA_PREMULTIPLIED) {
+        GLSL("color.rgb /= vec3(max(color.a, 1e-6)); \n");
         repr->alpha = PL_ALPHA_INDEPENDENT;
     }
 
@@ -138,11 +134,6 @@ void pl_shader_decode_color(pl_shader sh, struct pl_color_repr *repr,
 
     case PL_COLOR_SYSTEM_COUNT:
         pl_unreachable();
-    }
-
-    if (repr->alpha == PL_ALPHA_INDEPENDENT) {
-        GLSL("color.rgb *= vec3(color.a);\n");
-        repr->alpha = PL_ALPHA_PREMULTIPLIED;
     }
 
     // Gamma adjustment. Doing this here (in non-linear light) is technically
@@ -259,8 +250,8 @@ void pl_shader_encode_color(pl_shader sh, const struct pl_color_repr *repr)
             GLSL("color.rgb = pow(color.rgb, vec3(1.0/2.6)) * vec3(%s); \n", xyzscale);
     }
 
-    if (repr->alpha == PL_ALPHA_INDEPENDENT)
-        GLSL("color.rgb /= vec3(max(color.a, 1e-6));\n");
+    if (repr->alpha == PL_ALPHA_PREMULTIPLIED)
+        GLSL("color.rgb *= vec3(color.a); \n");
 
     GLSL("}\n");
 }
@@ -1177,10 +1168,6 @@ void pl_shader_color_map(pl_shader sh,
 
     struct pl_color_repr repr = args->repr;
     pl_shader_decode_color(sh, &repr, NULL);
-    if (repr.alpha == PL_ALPHA_PREMULTIPLIED) {
-        GLSL("color.rgb /= vec3(max(color.a, 1e-6));\n");
-        repr.alpha = PL_ALPHA_INDEPENDENT;
-    }
 
     // All operations from here on require linear light as a starting point,
     // so we linearize even if src.transfer == dst.transfer when one of the other
@@ -1255,9 +1242,6 @@ void pl_shader_color_map(pl_shader sh,
 
     pl_shader_inverse_ootf(sh, dst);
     pl_shader_delinearize(sh, dst);
-
-    if (repr.alpha == PL_ALPHA_INDEPENDENT)
-        GLSL("color.rgb *= vec3(color.a);\n");
     pl_shader_encode_color(sh, &args->repr);
     GLSL("}\n");
 }
