@@ -26,6 +26,7 @@ struct cached_frame {
     uint64_t signature;
     uint64_t params_hash; // for detecting `pl_render_params` changes
     struct pl_color_space color;
+    struct pl_color_repr repr;
     struct pl_icc_profile profile;
     pl_tex tex;
     int comps;
@@ -805,6 +806,7 @@ static void draw_overlays(struct pass_state *pass, pl_tex fbo,
         pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
             .src = ol.color,
             .dst = color,
+            .repr = ol.repr,
         ));
 
         if (use_sigmoid)
@@ -1833,6 +1835,7 @@ static bool pass_output_target(struct pass_state *pass)
         pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
             .src = image->color,
             .dst = lut_in,
+            .repr = img->repr,
             .prelinearized = prelinearized,
         ));
 
@@ -1852,6 +1855,7 @@ static bool pass_output_target(struct pass_state *pass)
             pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
                 .src = lut_out,
                 .dst = img->color,
+                .repr = img->repr,
             ));
         }
     }
@@ -1884,6 +1888,7 @@ static bool pass_output_target(struct pass_state *pass)
         pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
             .src = image->color,
             .dst = res.src_color,
+            .repr = img->repr,
             .peak_detect_state = &rr->peak_detect_state,
             .prelinearized = prelinearized,
         ));
@@ -1893,6 +1898,7 @@ static bool pass_output_target(struct pass_state *pass)
         pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
             .src = res.dst_color,
             .dst = target->color,
+            .repr = img->repr,
         ));
 
         need_conversion = false;
@@ -1915,6 +1921,7 @@ fallback:
         pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
             .src = image->color,
             .dst = target->color,
+            .repr = img->repr,
             .peak_detect_state = &rr->peak_detect_state,
             .prelinearized = prelinearized,
         ));
@@ -2876,6 +2883,7 @@ bool pl_render_image_mix(pl_renderer rr, const struct pl_frame_mix *images,
             f->params_hash = params_hash;
             f->color = inter_pass.img.color;
             f->comps = inter_pass.img.comps;
+            f->repr = inter_pass.img.repr;
         }
 
         pl_assert(fidx < MAX_MIX_FRAMES);
@@ -2937,6 +2945,7 @@ bool pl_render_image_mix(pl_renderer rr, const struct pl_frame_mix *images,
         // finagling that state is just not worth it because this is an
         // exceptionally unlikely hypothetical.
         pl_shader_color_map(sh, NULL, pl_color_map_args(
+            .repr = frames[i].repr,
             .src = frames[i].color,
             .dst = pass.image.color,
         ));
