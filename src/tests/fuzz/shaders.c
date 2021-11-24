@@ -87,12 +87,16 @@ int main()
                 pl_shader_detect_peak(sh, pl_color_space_hdr10, &peak, NULL);
                 break;
             case 'm':
-                pl_shader_color_map(sh, NULL, pl_color_space_bt709,
-                                    pl_color_space_monitor, NULL, false);
+                pl_shader_color_map(sh, NULL, pl_color_map_args(
+                    .src = pl_color_space_bt709,
+                    .dst = pl_color_space_monitor,
+                ));
                 break;
             case 't':
-                pl_shader_color_map(sh, NULL, pl_color_space_hdr10,
-                                    pl_color_space_monitor, &peak, false);
+                pl_shader_color_map(sh, NULL, pl_color_map_args(
+                    .src = pl_color_space_hdr10,
+                    .dst = pl_color_space_monitor,
+                ));
                 break;
             case 'd':
                 pl_shader_dither(sh, 8, &dither, pl_dither_params(

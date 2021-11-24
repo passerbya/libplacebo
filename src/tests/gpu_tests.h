@@ -500,8 +500,8 @@ static void pl_shader_tests(pl_gpu gpu)
         };
         sh = pl_dispatch_begin(dp);
         pl_shader_sample_nearest(sh, pl_sample_src( .tex = src ));
-        pl_shader_color_map(sh, NULL, src_space, dst_space, NULL, false);
-        pl_shader_color_map(sh, NULL, dst_space, src_space, NULL, false);
+        pl_shader_color_map(sh, NULL, pl_color_map_args(src_space, dst_space));
+        pl_shader_color_map(sh, NULL, pl_color_map_args(dst_space, src_space));
         REQUIRE(pl_dispatch_finish(dp, pl_dispatch_params(
             .shader = &sh,
             .target = fbo,

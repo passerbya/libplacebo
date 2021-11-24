@@ -285,27 +285,39 @@ struct pl_color_map_params {
 #define pl_color_map_params(...) (&(struct pl_color_map_params) { PL_COLOR_MAP_DEFAULTS __VA_ARGS__ })
 extern const struct pl_color_map_params pl_color_map_default_params;
 
+// Helper struct to group together the low-level invocation details of the
+// `pl_shader_color_map` call, which are separate from the parameters affecting
+// its overall operation.
+struct pl_color_map_args {
+    // Source and target color space for the mapping
+    struct pl_color_space src;
+    struct pl_color_space dst;
+
+    // If set to a valid peak detection state object (as created by
+    // `pl_shader_detect_peak`), the detected values will be used in place of
+    // `src.sig_peak` / `src.sig_avg`.
+    //
+    // Note: The peak detection state object is only updated after the shader
+    // is dispatched, so if `pl_shader_detect_peak` is called as part of the
+    // same shader as `pl_shader_color_map`, the results will end up delayed by
+    // one frame. If frame-level accuracy is desired, then users should call
+    // `pl_shader_detect_peak` separately and dispatch the resulting shader
+    // *before* dispatching this one.
+    pl_shader_obj *peak_detect_state;
+
+    // If true, the logic will assume the input has already been linearized by
+    // the caller (e.g. as part of a previous linear light scaling operation).
+    bool prelinearized;
+};
+
+#define pl_color_map_args(...) (&(struct pl_color_map_args) { __VA_ARGS__ })
+
 // Maps `vec4 color` from one color space to another color space according
 // to the parameters (described in greater depth above). If `params` is left
-// as NULL, it defaults to `&pl_color_map_default_params`. If `prelinearized`
-// is true, the logic will assume the input has already been linearized by the
-// caller (e.g. as part of a previous linear light scaling operation).
-//
-// If `peak_detect_state` is set to a valid peak detection state object (as
-// created by `pl_shader_detect_peak`), the detected values will be used in
-// place of `src.sig_peak` / `src.sig_avg`.
-//
-// Note: The peak detection state object is only updated after the shader is
-// dispatched, so if `pl_shader_detect_peak` is called as part of the same
-// shader as `pl_shader_color_map`, the results will end up delayed by one
-// frame. If frame-level accuracy is desired, then users should call
-// `pl_shader_detect_peak` separately and dispatch the resulting shader
-// *before* dispatching this one.
+// as NULL, it defaults to `&pl_color_map_default_params`.
 void pl_shader_color_map(pl_shader sh,
                          const struct pl_color_map_params *params,
-                         struct pl_color_space src, struct pl_color_space dst,
-                         pl_shader_obj *peak_detect_state,
-                         bool prelinearized);
+                         const struct pl_color_map_args *args);
 
 // Applies a set of cone distortion parameters to `vec4 color` in a given color
 // space. This can be used to simulate color blindness. See `pl_cone_params`

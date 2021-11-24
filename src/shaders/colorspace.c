@@ -1154,11 +1154,11 @@ static void pl_shader_tone_map(pl_shader sh, struct pl_color_space src,
     GLSL("} \n");
 }
 
-void pl_shader_color_map(pl_shader sh, const struct pl_color_map_params *params,
-                         struct pl_color_space src, struct pl_color_space dst,
-                         pl_shader_obj *peak_detect_state,
-                         bool prelinearized)
+void pl_shader_color_map(pl_shader sh,
+                         const struct pl_color_map_params *params,
+                         const struct pl_color_map_args *args)
 {
+    struct pl_color_space src = args->src, dst = args->dst;
     if (!sh_require(sh, PL_SHADER_SIG_COLOR, 0, 0))
         return;
 
@@ -1183,7 +1183,7 @@ void pl_shader_color_map(pl_shader sh, const struct pl_color_map_params *params,
                        src.sig_scale != dst.sig_scale ||
                        src.light != dst.light;
     bool need_gamut_warn = false;
-    bool is_linear = prelinearized;
+    bool is_linear = args->prelinearized;
     if (need_linear && !is_linear) {
         pl_shader_linearize(sh, src);
         is_linear = true;
@@ -1201,7 +1201,7 @@ void pl_shader_color_map(pl_shader sh, const struct pl_color_map_params *params,
 
     if (need_peak || need_black) {
         pl_shader_tone_map(sh, src, dst, need_peak, need_black,
-                           peak_detect_state, params);
+                           args->peak_detect_state, params);
         need_gamut_warn = true;
     }
 

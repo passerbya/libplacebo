@@ -802,8 +802,10 @@ static void draw_overlays(struct pass_state *pass, pl_tex fbo,
 
         sh->res.output = PL_SHADER_SIG_COLOR;
         pl_shader_decode_color(sh, &ol.repr, NULL);
-        pl_shader_color_map(sh, params->color_map_params, ol.color, color,
-                            NULL, false);
+        pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+            .src = ol.color,
+            .dst = color,
+        ));
 
         if (use_sigmoid)
             pl_shader_sigmoidize(sh, params->sigmoid_params);
@@ -1828,8 +1830,11 @@ static bool pass_output_target(struct pass_state *pass)
             break;
         }
 
-        pl_shader_color_map(sh, params->color_map_params, image->color, lut_in,
-                            NULL, prelinearized);
+        pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+            .src = image->color,
+            .dst = lut_in,
+            .prelinearized = prelinearized,
+        ));
 
         if (params->lut_type == PL_LUT_NORMALIZED) {
             GLSLF("color.rgb *= vec3(1.0/%s); \n",
@@ -1844,8 +1849,10 @@ static bool pass_output_target(struct pass_state *pass)
         }
 
         if (params->lut_type != PL_LUT_CONVERSION) {
-            pl_shader_color_map(sh, params->color_map_params, lut_out, img->color,
-                                NULL, false);
+            pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+                .src = lut_out,
+                .dst = img->color,
+            ));
         }
     }
 
@@ -1874,13 +1881,19 @@ static bool pass_output_target(struct pass_state *pass)
         }
 
         // current -> ICC in
-        pl_shader_color_map(sh, params->color_map_params, image->color,
-                            res.src_color, &rr->peak_detect_state, prelinearized);
+        pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+            .src = image->color,
+            .dst = res.src_color,
+            .peak_detect_state = &rr->peak_detect_state,
+            .prelinearized = prelinearized,
+        ));
         // ICC in -> ICC out
         pl_icc_apply(sh, &rr->icc_state);
         // ICC out -> target
-        pl_shader_color_map(sh, params->color_map_params, res.dst_color,
-                            target->color, NULL, false);
+        pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+            .src = res.dst_color,
+            .dst = target->color,
+        ));
 
         need_conversion = false;
     }
@@ -1899,8 +1912,12 @@ fallback:
 
     if (need_conversion) {
         // current -> target
-        pl_shader_color_map(sh, params->color_map_params, image->color,
-                            target->color, &rr->peak_detect_state, prelinearized);
+        pl_shader_color_map(sh, params->color_map_params, pl_color_map_args(
+            .src = image->color,
+            .dst = target->color,
+            .peak_detect_state = &rr->peak_detect_state,
+            .prelinearized = prelinearized,
+        ));
     }
 
     // Apply color blindness simulation if requested
@@ -2919,7 +2936,10 @@ bool pl_render_image_mix(pl_renderer rr, const struct pl_frame_mix *images,
         // converting between different image profiles, and the headache of
         // finagling that state is just not worth it because this is an
         // exceptionally unlikely hypothetical.
-        pl_shader_color_map(sh, NULL, frames[i].color, pass.image.color, NULL, false);
+        pl_shader_color_map(sh, NULL, pl_color_map_args(
+            .src = frames[i].color,
+            .dst = pass.image.color,
+        ));
 
         ident_t weight = "1.0";
         if (weights[i] != wsum) { // skip loading weight for nearest neighbour
