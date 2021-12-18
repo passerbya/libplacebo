@@ -37,6 +37,7 @@ project('libplacebo', ['c', 'cpp'],
       '184': 'add pl_map_avframe/pl_unmap_avframe, deprecate pl_upload_avframe',
       '185': 'add PL_COLOR_SYSTEM_DOLBYVISION and reshaping',
       '186': 'add <libplacebo/tone_mapping.h>',
+      '187': 'refactor pl_color_map_params tone mapping settings',
     }.keys().length(),
     # Fix version
     0)
