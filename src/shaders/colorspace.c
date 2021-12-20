@@ -1455,19 +1455,12 @@ void pl_shader_color_map(pl_shader sh, const struct pl_color_map_params *params,
                 ident_t dst_max = SH_FLOAT(dst.sig_peak * dst.sig_scale);
 
                 GLSL("float cmin = min(min(color.r, color.g), color.b);         \n"
-                     "if (cmin < %s) {                                          \n"
-                     "    float luma = dot(%s, color.rgb);                      \n"
-                     "    float coeff = (%s - cmin) / (luma - cmin);            \n"
-                     "    coeff = clamp(coeff, 0.0, 1.0);                       \n"
-                     "    color.rgb = mix(color.rgb, vec3(luma), coeff);        \n"
-                     "}                                                         \n"
+                     "if (cmin < %s)                                            \n"
+                     "    color.rgb += vec3(%s - cmin);                         \n"
                      "float cmax = 1.0/%s * max(max(color.r, color.g), color.b);\n"
                      "if (cmax > 1.0)                                           \n"
                      "    color.rgb /= cmax;                                    \n",
-                     dst_min,
-                     sh_luma_coeffs(sh, dst.primaries),
-                     dst_min,
-                     dst_max);
+                     dst_min, dst_min, dst_max);
 
             } else {
                 need_gamut_warn = true;
