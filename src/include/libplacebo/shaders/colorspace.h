@@ -289,8 +289,7 @@ struct pl_color_map_params {
     .tone_mapping_algo      = PL_TONE_MAPPING_BT_2390,          \
     .desaturation_strength  = 0.90,                             \
     .desaturation_exponent  = 0.20,                             \
-    .desaturation_base      = 0.18,                             \
-    .gamut_clipping         = true,
+    .desaturation_base      = 0.18,
 
 #define pl_color_map_params(...) (&(struct pl_color_map_params) { PL_COLOR_MAP_DEFAULTS __VA_ARGS__ })
 extern const struct pl_color_map_params pl_color_map_default_params;
